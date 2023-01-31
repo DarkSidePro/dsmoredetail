@@ -25,3 +25,8 @@
 * Don't forget to prefix your containers with your own identifier
 * to avoid any conflicts with others containers.
 */
+$('.add-to-cart').on('click', function(e) {
+    e.preventDefault();
+
+    $('#dsmoredetaiModalCenter').modal('show');
+})
