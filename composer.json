@@ -1,0 +1,10 @@
+{
+    "require": {
+    },
+    "autoload": {
+        "classmap": ["classes"]
+    },
+    "config": {
+        "optimize-autoloader": true
+    }
+}
