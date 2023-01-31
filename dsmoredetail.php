@@ -24,9 +24,13 @@
 *  International Registered Trademark & Property of PrestaShop SA
 */
 
+use DSMoreDetailObject;
+
 if (!defined('_PS_VERSION_')) {
     exit;
 }
+
+require 'vendor/autoload.php';
 
 class Dsmoredetail extends Module
 {
@@ -64,19 +68,36 @@ class Dsmoredetail extends Module
         Configuration::updateValue('DSMOREDETAIL_LIVE_MODE', false);
 
         include(dirname(__FILE__).'/sql/install.php');
+        $this->genereteFreshData();
 
         return parent::install() &&
             $this->registerHook('header') &&
             $this->registerHook('displayBackOfficeHeader') &&
-            $this->registerHook('actionProductAdd') &&
+            $this->registerHook('actionProductSave') &&
+            $this->registerHook('actionProductUpdate') &&
             $this->registerHook('actionProductDelete') &&
             $this->registerHook('displayAdminProductsExtra') &&
             $this->registerHook('displayProductExtraContent');
     }
 
+    protected function genereteFreshData()
+    {
+        $db = \Db::getInstance();
+        $sql = 'INSERT INTO ' . _DB_PREFIX_ . 'dsmoredetail (id_product, status) SELECT id_product, 0 FROM ' . _DB_PREFIX_ . 'product';
+        $result = $db->execute($sql);
+    }
+
+    protected function deleteAllData()
+    {
+        $db = \Db::getInstance();
+        $sql = 'DELETE FROM '._DB_PREFIX_.'dsmoredetail';
+        $result = $db->execute($sql);
+    }
+
     public function uninstall()
     {
         Configuration::deleteByName('DSMOREDETAIL_LIVE_MODE');
+        $this->deleteAllData();
 
         include(dirname(__FILE__).'/sql/uninstall.php');
 
@@ -99,7 +120,7 @@ class Dsmoredetail extends Module
 
         $output = $this->context->smarty->fetch($this->local_path.'views/templates/admin/configure.tpl');
 
-        return $output.$this->renderForm();
+        return $this->renderForm();
     }
 
     /**
@@ -160,19 +181,18 @@ class Dsmoredetail extends Module
                                 'label' => $this->l('Disabled')
                             )
                         ),
+                       
                     ),
                     array(
-                        'col' => 3,
-                        'type' => 'text',
-                        'prefix' => '<i class="icon icon-envelope"></i>',
-                        'desc' => $this->l('Enter a valid email address'),
-                        'name' => 'DSMOREDETAIL_ACCOUNT_EMAIL',
-                        'label' => $this->l('Email'),
-                    ),
-                    array(
-                        'type' => 'password',
-                        'name' => 'DSMOREDETAIL_ACCOUNT_PASSWORD',
-                        'label' => $this->l('Password'),
+                        'type' => 'textarea',
+                        'label' => $this->l('Info message'),
+                        'desc' => $this->l('Write message to your customers'),
+                        'name' => 'DSMOREDETAIL_MESSAGE',
+                        'lang' => true,
+                        'cols' => 60,
+                        'rows' => 10,
+                        'class' => 'rte',
+                        'autoload_rte' => true,
                     ),
                 ),
                 'submit' => array(
@@ -189,8 +209,7 @@ class Dsmoredetail extends Module
     {
         return array(
             'DSMOREDETAIL_LIVE_MODE' => Configuration::get('DSMOREDETAIL_LIVE_MODE', true),
-            'DSMOREDETAIL_ACCOUNT_EMAIL' => Configuration::get('DSMOREDETAIL_ACCOUNT_EMAIL', 'contact@prestashop.com'),
-            'DSMOREDETAIL_ACCOUNT_PASSWORD' => Configuration::get('DSMOREDETAIL_ACCOUNT_PASSWORD', null),
+            'DSMOREDETAIL_MESSAGE' => Configuration::get('DSMOREDETAIL_MESSAGE'),
         );
     }
 
@@ -226,23 +245,118 @@ class Dsmoredetail extends Module
         $this->context->controller->addCSS($this->_path.'/views/css/front.css');
     }
 
-    public function hookActionProductAdd()
+    public function hookActionProductSave($params)
     {
-        /* Place your code here. */
+        $id_product = $params['id_product'];
+        $status = (int) Tools::getValue('dsmdStatus');
+        $id = $this->getDSMDByIdProduct($id_product);
+
+        if ($id == false) {
+            $this->createMoreDetail($id_product, $status);
+        } else {
+            $this->updateData($id_product, $status);
+        }
     }
 
-    public function hookActionProductDelete()
+    protected function getDSMDByIdProduct(int $id_product)
     {
-        /* Place your code here. */
+        $sql = new DbQuery;
+        $sql->select('id')
+            ->from('dsmoredetail')
+            ->where('id_product ='.$id_product);
+
+        $result = Db::getInstance()->executeS($sql); 
+        
+        if (!empty($result)) {
+            return (int) $result[0]['id'];
+        }
+
+        return false;
     }
 
-    public function hookDisplayAdminProductsExtra()
+    protected function updateData(int $id_product, int $status): int
     {
-        /* Place your code here. */
+        $sql = new DbQuery;
+        $sql->select('id')
+            ->from('dsmoredetail')
+            ->where('id_product ='.$id_product)
+            ->limit(1);
+
+        $result = Db::getInstance()->executeS($sql); 
+        $id = $result[0]['id'];
+
+        $dspopularproduct = new DSMoreDetailObject($id);
+        $dspopularproduct->status = $status;
+        $dspopularproduct->update();
+
+        return $dspopularproduct->id;
     }
 
-    public function hookDisplayProductExtraContent()
+    protected function createMoreDetail(int $id_product, int $status): int
     {
-        /* Place your code here. */
+        $dspopularproduct = new DSMoreDetailObject();
+        $dspopularproduct->id_product = $id_product;
+        $dspopularproduct->status = $status;
+        $dspopularproduct->add();
+
+        return $dspopularproduct->id;
+    }
+
+    public function hookActionProductUpdate($params)
+    {
+        $id_product = $params['id_product'];
+        $status = (int) Tools::getValue('dsmdStatus');
+
+        $this->updateData($id_product, $status);
+    }
+
+    public function hookActionProductDelete($params)
+    {
+        $id_product = $params['id_product'];
+
+        $this->deleteData($id_product);
+    }
+
+    protected function deleteData(int $id): void
+    {
+        $dspopularproduct = new DSMoreDetailObject($id);
+        $dspopularproduct->delete();
+
+    }
+
+    public function hookDisplayAdminProductsExtra($params)
+    {
+        $id_product = $params['id_product'];
+        $dspopularproductId = $this->getDSMDByIdProduct($id_product);
+        $dspopularproduct = $this->getDSMoreDetail($dspopularproductId);
+        $status = $dspopularproduct->status;
+
+        $this->context->smarty->assign('status', $status);
+
+        return $this->context->smarty->fetch($this->local_path.'views/templates/admin/displayAdminProductsExtra.tpl');
+    }
+
+    protected function getDSMoreDetail(int $id): DSMoreDetailObject
+    {
+        return new DSMoreDetailObject($id);
+    }
+
+    public function hookDisplayProductExtraContent($params)
+    {
+        $live = Configuration::get('DSMOREDETAIL_LIVE_MODE');
+        $message = Configuration::get('DSMOREDETAIL_MESSAGE');
+        $id_product = Tools::getValue('id_product');
+
+        $dsmdID = $this->getDSMDByIdProduct($id_product);
+
+        if ($dsmdID !== false) {
+            $dsmd = $this->getDSMoreDetail($dsmdID);
+            
+            if ($dsmd->status == true) {
+                $this->context->smarty->assign('message', $message);
+           
+                return $this->context->smarty->fetch($this->local_path.'views/templates/hook/displayProductExtraContent.tpl');
+            }
+        }
     }
 }
